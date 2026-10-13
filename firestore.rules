@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.admin == true
+        && exists(/databases/$(database)/documents/administrators/$(request.auth.uid));
+    }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
+
+    match /users/{uid} {
+      allow read: if isAdmin() || isSelf(uid);
+      // Students can create only a student profile; clients cannot edit role or privileged fields.
+      allow create: if isSelf(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'student'
+        && request.resource.data.keys().hasOnly([
+          'uid','displayName','email','role','status','createdAt'
+        ]);
+      allow update: if isAdmin()
+        || (isSelf(uid)
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['displayName']));
+      allow delete: if isAdmin();
+    }
+
+    match /administrators/{uid} {
+      allow read: if isAdmin() || isSelf(uid);
+      allow write: if false; // Provision only with Admin SDK in a trusted environment.
+    }
+
+    match /studentCodes/{code} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow write: if false; // Backend allocates unique codes atomically.
+    }
+
+    match /courses/{courseId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.published == true);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /lessonActivity/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.studentUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.studentUid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /liveSessions/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.published == true);
+      allow write: if isAdmin();
+    }
+
+    match /attendanceRecords/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.studentUid == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    match /examinations/{id} {
+      // Only safe, student-facing examination metadata belongs in this collection.
+      allow read: if isAdmin() || (signedIn() && resource.data.published == true);
+      allow write: if isAdmin();
+    }
+
+    match /examinationQuestions/{id} {
+      allow read, write: if isAdmin(); // Keep answer keys/rubrics here, not in student-readable docs.
+    }
+
+    match /examinationAttempts/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.studentUid == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.studentUid == request.auth.uid
+        && !request.resource.data.keys().hasAny(['score','grade','correctAnswers']);
+      allow update, delete: if isAdmin();
+    }
+
+    match /examinationGrades/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /tuitionAccounts/{uid} {
+      allow read: if isAdmin() || isSelf(uid);
+      allow write: if false; // Update via trusted backend only.
+    }
+
+    match /paymentRequests/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.studentUid == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.studentUid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.amountPiasters is int
+        && request.resource.data.amountPiasters > 0
+        && request.resource.data.keys().hasOnly([
+          'studentUid','studentName','amountPiasters','note','status','method','createdAt'
+        ]);
+      allow update, delete: if false; // Confirm/reject only through trusted backend.
+    }
+
+    match /paymentTransactions/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.studentUid == request.auth.uid);
+      allow write: if false;
+    }
+
+    match /notifications/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.recipientUid == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    match /auditLogs/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

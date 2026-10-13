@@ -1,0 +1,27 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+    match /courseFiles/{uid}/{fileName} {
+      allow read: if signedIn(); // Replace with course-enrollment checks before restricted course rollout.
+      allow write: if isAdmin()
+        && request.resource.size < 100 * 1024 * 1024
+        && (request.resource.contentType.matches('application/pdf')
+          || request.resource.contentType.matches('video/.*')
+          || request.resource.contentType.matches('application/msword')
+          || request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.*'));
+    }
+    match /paymentReceipts/{uid}/{fileName} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow write: if signedIn() && request.auth.uid == uid
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
